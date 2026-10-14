@@ -1,15 +1,3 @@
-# __PACK_NAME__
+# agentic-ship
 
-__PACK_DESCRIPTION__
-
-Keywords: __PACK_KEYWORDS__.
-
-- SDK: import { summarizeText, dispatchText } from "__NPM_NAME__".
-- CLI: __PACK_COMMAND__ summary --text "...".
-- MCP: run __PACK_COMMAND__ mcp, then call summarize_text.
-
-## Docs
-
-- README: https://github.com/__GITHUB_USER__/__PACK_NAME__
-- Core contract: https://github.com/__GITHUB_USER__/__PACK_NAME__/blob/main/docs/agentic-core.md
-- License: MIT
+One shipping core with CLI, library, and MCP faces. EasyPost and Shippo.

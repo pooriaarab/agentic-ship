@@ -1,58 +1,21 @@
 {
-  "name": "@pooriaarab/agentic-scaffold",
+  "name": "agentic-ship",
   "version": "0.1.0",
-  "description": "Canonical scaffold for a CLI plus library plus MCP server pack.",
-  "keywords": [
-    "cli",
-    "mcp",
-    "scaffold",
-    "starter",
-    "typescript"
-  ],
+  "description": "Rate, buy labels, and track parcels with EasyPost or Shippo.",
+  "keywords": ["shipping", "labels", "tracking", "easypost", "shippo", "mcp"],
   "license": "MIT",
   "author": "Pooria Arab",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/pooriaarab/agentic-scaffold.git"
-  },
+  "repository": {"type": "git", "url": "https://github.com/pooriaarab/agentic-ship.git"},
   "type": "module",
-  "private": true,
-  "engines": {
-    "node": ">=18"
-  },
-  "files": [
-    "dist"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
-  "mcpName": "io.github.pooriaarab/agentic-scaffold",
+  "engines": {"node": ">=18"},
+  "files": ["dist"],
+  "publishConfig": {"access": "public"},
+  "mcpName": "io.github.pooriaarab/agentic-ship",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "bin": {
-    "agentic-pack": "./dist/cli.js",
-    "agentic-pack-mcp": "./dist/mcp-bin.js"
-  },
-  "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.25.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.6.0",
-    "vitest": "^3.0.0"
-  }
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "bin": {"agentic-ship": "./dist/cli.js", "agentic-ship-mcp": "./dist/mcp-bin.js"},
+  "scripts": {"build": "tsup", "typecheck": "tsc --noEmit", "test": "vitest run", "clean": "rm -rf dist"},
+  "dependencies": {"@modelcontextprotocol/sdk": "^1.12.0", "agentic-core": "^0.1.0", "zod": "^3.25.0"},
+  "devDependencies": {"@types/node": "^22.0.0", "tsup": "^8.0.0", "typescript": "^5.6.0", "vitest": "^3.0.0"}
 }
