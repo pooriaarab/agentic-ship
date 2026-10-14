@@ -1,83 +1,83 @@
-import { randomUUID } from "node:crypto";
+export type Vendor = "easypost" | "shippo";
 
-// Brand config. Each pack defines one brand and reuses it in the
-// library, the CLI, and the MCP server so the three faces agree.
-
-export interface BrandConfig {
-  name: string;
-  command: string;
-  description: string;
-  keywords: string[];
-  version: string;
+export interface Address {
+  name?: string;
+  company?: string;
+  street1: string;
+  street2?: string;
+  city: string;
+  state?: string;
+  postalCode: string;
+  country: string;
+  phone?: string;
+  email?: string;
 }
 
-export function defineBrand(config: BrandConfig): BrandConfig {
-  for (const key of ["name", "command", "version"] as const) {
-    if (config[key].trim().length === 0) {
-      throw new Error(`brand ${key} must not be empty`);
-    }
-  }
-  return Object.freeze({ ...config, keywords: [...config.keywords] });
+export interface Parcel {
+  length: number;
+  width: number;
+  height: number;
+  weight: number;
+  predefinedPackage?: string;
 }
 
-// Logger. Logs go to stderr so result output on stdout stays clean.
-
-export type LogLevel = "debug" | "info" | "warn" | "error";
-
-const LEVEL_ORDER: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-};
-
-export interface Logger {
-  debug(message: string): void;
-  info(message: string): void;
-  warn(message: string): void;
-  error(message: string): void;
+export interface ShipmentInput {
+  vendor: Vendor;
+  fromAddress: Address;
+  toAddress: Address;
+  parcel: Parcel;
+  carrier?: string;
+  service?: string;
+  reference?: string;
 }
 
-export interface LoggerOptions {
-  level?: LogLevel;
-  quiet?: boolean;
-  sink?: (line: string) => void;
+export interface Rate {
+  carrier: string;
+  service: string;
+  amount: string;
+  currency: string;
+  deliveryDays?: number;
+  rateId?: string;
 }
 
-export function createLogger(options: LoggerOptions = {}): Logger {
-  const level = options.level ?? "info";
-  const quiet = options.quiet ?? false;
-  const sink =
-    options.sink ?? ((line: string) => process.stderr.write(`${line}\n`));
-  const emit = (at: LogLevel, message: string): void => {
-    if (quiet) return;
-    if (LEVEL_ORDER[at] < LEVEL_ORDER[level]) return;
-    sink(`[${at}] ${message}`);
-  };
-  return {
-    debug: (message) => emit("debug", message),
-    info: (message) => emit("info", message),
-    warn: (message) => emit("warn", message),
-    error: (message) => emit("error", message),
-  };
+export interface RateResult {
+  dryRun: boolean;
+  vendor: Vendor;
+  shipment: ShipmentInput;
+  rates: Rate[];
 }
 
-// Errors. Adapters and guards throw these. Callers catch and report.
-// Nothing in this core swallows a failure and returns success.
+export interface LabelResult {
+  dryRun: boolean;
+  vendor: Vendor;
+  shipment: ShipmentInput;
+  rate: Rate;
+  labelUrl?: string;
+  trackingCode?: string;
+  trackingUrl?: string;
+  shipmentId?: string;
+}
 
-export class GuardError extends Error {
-  readonly code = "GUARD_DENIED";
+export interface TrackingEvent {
+  status: string;
+  message?: string;
+  location?: string;
+  occurredAt?: string;
+}
 
-  constructor(message: string) {
-    super(message);
-    this.name = "GuardError";
-  }
+export interface TrackingResult {
+  dryRun: boolean;
+  vendor: Vendor;
+  trackingCode: string;
+  status: string;
+  carrier?: string;
+  trackingUrl?: string;
+  events: TrackingEvent[];
 }
 
 export class VendorError extends Error {
   readonly code = "VENDOR_FAILED";
   readonly status?: number;
-
   constructor(message: string, options: { status?: number; cause?: unknown } = {}) {
     super(message, { cause: options.cause });
     this.name = "VendorError";
@@ -85,286 +85,123 @@ export class VendorError extends Error {
   }
 }
 
-// Guards. Caps bound total dispatches. Quiet hours block a UTC window.
-// The blocklist blocks texts that contain a banned term.
-
-export interface CapsConfig {
-  maxDispatches?: number;
+export interface ShippingAdapter {
+  readonly vendor: Vendor;
+  rate(input: ShipmentInput): Promise<RateResult>;
+  buyLabel(input: ShipmentInput, rate: Rate): Promise<LabelResult>;
+  track(trackingCode: string, carrier?: string): Promise<TrackingResult>;
 }
 
-export interface QuietHoursConfig {
-  startHour?: number;
-  endHour?: number;
-}
-
-export interface GuardsConfig {
-  caps?: CapsConfig;
-  quietHours?: QuietHoursConfig;
-  blocklist?: string[];
-  now?: () => Date;
-}
-
-export interface Guards {
-  readonly dispatchCount: number;
-  checkDispatch(text: string): void;
-  recordDispatch(): void;
-}
-
-function assertHour(value: number | undefined, label: string): void {
-  if (value === undefined) return;
-  if (!Number.isInteger(value) || value < 0 || value > 24) {
-    throw new Error(`${label} must be an integer from 0 to 24`);
+function ensureAddress(address: Address, label: string): void {
+  for (const field of ["street1", "city", "postalCode", "country"] as const) {
+    if (!address[field]?.trim()) throw new Error(`${label}.${field} is required`);
   }
 }
 
-export function createGuards(config: GuardsConfig = {}): Guards {
-  const maxDispatches = config.caps?.maxDispatches;
-  if (
-    maxDispatches !== undefined &&
-    (!Number.isInteger(maxDispatches) || maxDispatches < 0)
-  ) {
-    throw new Error("caps.maxDispatches must be an integer of 0 or more");
-  }
-  const startHour = config.quietHours?.startHour;
-  const endHour = config.quietHours?.endHour;
-  assertHour(startHour, "quietHours.startHour");
-  assertHour(endHour, "quietHours.endHour");
-  const blocklist = (config.blocklist ?? []).map((term) => term.toLowerCase());
-  const now = config.now ?? (() => new Date());
-  let count = 0;
-
-  const inQuietHours = (date: Date): boolean => {
-    if (startHour === undefined || endHour === undefined) return false;
-    const hour = date.getUTCHours();
-    if (startHour <= endHour) {
-      return hour >= startHour && hour < endHour;
+export function validateShipment(input: ShipmentInput): void {
+  ensureAddress(input.fromAddress, "fromAddress");
+  ensureAddress(input.toAddress, "toAddress");
+  for (const field of ["length", "width", "height", "weight"] as const) {
+    if (!Number.isFinite(input.parcel[field]) || input.parcel[field] <= 0) {
+      throw new Error(`parcel.${field} must be greater than zero`);
     }
-    return hour >= startHour || hour < endHour;
+  }
+}
+
+export function dryRunRate(input: ShipmentInput): RateResult {
+  validateShipment(input);
+  const pounds = input.parcel.weight;
+  const amount = (5 + pounds * 0.55).toFixed(2);
+  const rate: Rate = {
+    carrier: input.carrier ?? "USPS",
+    service: input.service ?? "Ground Advantage",
+    amount,
+    currency: "USD",
+    deliveryDays: 3,
+    rateId: "dry-run-rate",
   };
-
-  return {
-    get dispatchCount(): number {
-      return count;
-    },
-    checkDispatch(text: string): void {
-      if (maxDispatches !== undefined && count >= maxDispatches) {
-        throw new GuardError(
-          `dispatch cap reached (${maxDispatches} of ${maxDispatches})`,
-        );
-      }
-      if (inQuietHours(now())) {
-        throw new GuardError(
-          `quiet hours block dispatches from ${startHour}:00 to ${endHour}:00 UTC`,
-        );
-      }
-      const lowered = text.toLowerCase();
-      for (const term of blocklist) {
-        if (term.length > 0 && lowered.includes(term)) {
-          throw new GuardError(`text matches blocklisted term "${term}"`);
-        }
-      }
-    },
-    recordDispatch(): void {
-      count += 1;
-    },
-  };
+  return { dryRun: true, vendor: input.vendor, shipment: input, rates: [rate] };
 }
 
-// Router adapters. Each adapter delivers one text and returns a receipt.
-// Adapters throw VendorError on failure. They never swallow it.
-
-export interface DispatchReceipt {
-  adapter: string;
-  id: string;
-  chars: number;
-  at: string;
+export function dryRunLabel(input: ShipmentInput, rate?: Rate): LabelResult {
+  const selected = rate ?? dryRunRate(input).rates[0];
+  return { dryRun: true, vendor: input.vendor, shipment: input, rate: selected };
 }
 
-export interface RouterAdapter {
-  readonly name: string;
-  dispatch(text: string): Promise<DispatchReceipt>;
+export function dryRunTrack(vendor: Vendor, trackingCode: string, carrier?: string): TrackingResult {
+  if (!trackingCode.trim()) throw new Error("trackingCode is required");
+  return { dryRun: true, vendor, trackingCode, status: "pre_transit", carrier, events: [] };
 }
 
-export class LocalRouterAdapter implements RouterAdapter {
-  readonly name = "local";
-
-  async dispatch(text: string): Promise<DispatchReceipt> {
-    if (typeof text !== "string") {
-      throw new VendorError("local adapter needs a string");
-    }
-    return {
-      adapter: this.name,
-      id: randomUUID(),
-      chars: text.length,
-      at: new Date().toISOString(),
-    };
-  }
+export function createAdapter(vendor: Vendor, apiKey?: string, fetchFn: typeof fetch = fetch): ShippingAdapter {
+  if (!apiKey?.trim()) throw new VendorError(`${vendor} API key is required for live requests`);
+  return vendor === "easypost"
+    ? new EasyPostAdapter(apiKey, fetchFn)
+    : new ShippoAdapter(apiKey, fetchFn);
 }
 
-export interface HttpRouterOptions {
-  timeoutMs?: number;
-  fetchFn?: typeof fetch;
-}
-
-export class HttpRouterAdapter implements RouterAdapter {
-  readonly name = "http";
-  private readonly endpoint: string;
-  private readonly timeoutMs: number;
-  private readonly fetchFn: typeof fetch;
-
-  constructor(endpoint: string, options: HttpRouterOptions = {}) {
-    if (endpoint.trim().length === 0) {
-      throw new Error("http adapter needs an endpoint URL");
-    }
-    this.endpoint = endpoint;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
-    this.fetchFn = options.fetchFn ?? fetch;
-  }
-
-  async dispatch(text: string): Promise<DispatchReceipt> {
+abstract class HttpShippingAdapter implements ShippingAdapter {
+  abstract readonly vendor: Vendor;
+  constructor(protected readonly apiKey: string, protected readonly fetchFn: typeof fetch) {}
+  protected async request(url: string, init: RequestInit): Promise<unknown> {
     let response: Response;
-    try {
-      response = await this.fetchFn(this.endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch (error) {
-      throw new VendorError(`http adapter request failed: ${String(error)}`, {
-        cause: error,
-      });
-    }
-    if (!response.ok) {
-      throw new VendorError(
-        `http adapter got status ${response.status} from ${this.endpoint}`,
-        { status: response.status },
-      );
-    }
-    return {
-      adapter: this.name,
-      id: randomUUID(),
-      chars: text.length,
-      at: new Date().toISOString(),
-    };
+    try { response = await this.fetchFn(url, init); }
+    catch (error) { throw new VendorError(`${this.vendor} request failed: ${String(error)}`, { cause: error }); }
+    const body = await response.text();
+    if (!response.ok) throw new VendorError(`${this.vendor} returned ${response.status}: ${body}`, { status: response.status });
+    try { return JSON.parse(body) as unknown; }
+    catch { throw new VendorError(`${this.vendor} returned invalid JSON`); }
+  }
+  abstract rate(input: ShipmentInput): Promise<RateResult>;
+  abstract buyLabel(input: ShipmentInput, rate: Rate): Promise<LabelResult>;
+  abstract track(trackingCode: string, carrier?: string): Promise<TrackingResult>;
+}
+
+export class EasyPostAdapter extends HttpShippingAdapter {
+  readonly vendor = "easypost" as const;
+  private headers(): HeadersInit { return { Authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" }; }
+  async rate(input: ShipmentInput): Promise<RateResult> {
+    validateShipment(input);
+    const data = await this.request("https://api.easypost.com/v2/shipments", { method: "POST", headers: this.headers(), body: JSON.stringify({ shipment: { to_address: addressForEasyPost(input.toAddress), from_address: addressForEasyPost(input.fromAddress), parcel: input.parcel } }) }) as EasyPostShipment;
+    return { dryRun: false, vendor: this.vendor, shipment: input, rates: (data.rates ?? []).map(rateFromEasyPost) };
+  }
+  async buyLabel(input: ShipmentInput, rate: Rate): Promise<LabelResult> {
+    const data = await this.request(`https://api.easypost.com/v2/shipments/${shipmentIdFromRate(rate)}/buy`, { method: "POST", headers: this.headers(), body: JSON.stringify({ rate: { id: rate.rateId } }) }) as EasyPostShipment;
+    return labelFromEasyPost(input, rate, data);
+  }
+  async track(trackingCode: string, carrier?: string): Promise<TrackingResult> {
+    const data = await this.request("https://api.easypost.com/v2/trackers", { method: "POST", headers: this.headers(), body: JSON.stringify({ tracker: { tracking_code: trackingCode, carrier } }) }) as EasyPostTracker;
+    return { dryRun: false, vendor: this.vendor, trackingCode, carrier: data.carrier, status: data.status ?? "unknown", trackingUrl: data.public_url, events: (data.tracking_details ?? []).map((e) => ({ status: e.status ?? "unknown", message: e.message, location: e.tracking_location?.city, occurredAt: e.datetime })) };
   }
 }
 
-// Cost report. Each real dispatch records one entry. Dry runs record
-// nothing. The report answers "what did this pack spend".
-
-export interface CostEntry {
-  kind: string;
-  adapter: string;
-  units: number;
-  at: string;
-}
-
-export interface CostReport {
-  entries: CostEntry[];
-  dispatches: number;
-  units: number;
-}
-
-const costEntries: CostEntry[] = [];
-
-export function recordCost(entry: {
-  kind: string;
-  adapter: string;
-  units: number;
-}): void {
-  costEntries.push({ ...entry, at: new Date().toISOString() });
-}
-
-export function getCostReport(): CostReport {
-  const entries = costEntries.map((entry) => ({ ...entry }));
-  return {
-    entries,
-    dispatches: entries.filter((entry) => entry.kind === "dispatch").length,
-    units: entries.reduce((sum, entry) => sum + entry.units, 0),
-  };
-}
-
-export function resetCosts(): void {
-  costEntries.length = 0;
-}
-
-// Dispatch entry. Runs guards, then routes, then records cost.
-// Dry run walks the same path but calls no adapter and records no cost.
-
-export interface DispatchOptions {
-  adapter?: RouterAdapter;
-  guards?: Guards;
-  logger?: Logger;
-  dryRun?: boolean;
-}
-
-export interface DispatchResult {
-  dryRun: boolean;
-  adapter: string;
-  chars: number;
-  receipt?: DispatchReceipt;
-}
-
-export function createDryRunResult(text: string, adapterName: string): DispatchResult {
-  return { dryRun: true, adapter: adapterName, chars: text.length };
-}
-
-export async function dispatchText(
-  text: string,
-  options: DispatchOptions = {},
-): Promise<DispatchResult> {
-  const adapter = options.adapter ?? new LocalRouterAdapter();
-  options.guards?.checkDispatch(text);
-  if (options.dryRun === true) {
-    options.logger?.info(`dry run: would dispatch ${text.length} chars`);
-    return createDryRunResult(text, adapter.name);
+export class ShippoAdapter extends HttpShippingAdapter {
+  readonly vendor = "shippo" as const;
+  private headers(): HeadersInit { return { Authorization: `ShippoToken ${this.apiKey}`, "content-type": "application/json" }; }
+  async rate(input: ShipmentInput): Promise<RateResult> {
+    validateShipment(input);
+    const data = await this.request("https://api.goshippo.com/shipments/", { method: "POST", headers: this.headers(), body: JSON.stringify({ address_from: addressForShippo(input.fromAddress), address_to: addressForShippo(input.toAddress), parcels: [parcelForShippo(input.parcel)], async: false }) }) as ShippoShipment;
+    return { dryRun: false, vendor: this.vendor, shipment: input, rates: (data.rates ?? []).map(rateFromShippo) };
   }
-  const receipt = await adapter.dispatch(text);
-  options.guards?.recordDispatch();
-  recordCost({ kind: "dispatch", adapter: adapter.name, units: text.length });
-  options.logger?.info(`dispatched ${text.length} chars via ${adapter.name}`);
-  return { dryRun: false, adapter: adapter.name, chars: text.length, receipt };
-}
-
-// Summarize. Pure text stats. The sample capability every face exposes.
-
-export interface TopWord {
-  word: string;
-  count: number;
-}
-
-export interface TextSummary {
-  chars: number;
-  words: number;
-  lines: number;
-  topWords: TopWord[];
-}
-
-export interface SummarizeOptions {
-  topN?: number;
-}
-
-export function summarizeText(
-  text: string,
-  options: SummarizeOptions = {},
-): TextSummary {
-  const topN = options.topN ?? 5;
-  const tokens = text.split(/\s+/).filter((token) => token.length > 0);
-  const counts = new Map<string, number>();
-  for (const token of tokens) {
-    const word = token.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    if (word.length === 0) continue;
-    counts.set(word, (counts.get(word) ?? 0) + 1);
+  async buyLabel(input: ShipmentInput, rate: Rate): Promise<LabelResult> {
+    const data = await this.request("https://api.goshippo.com/transactions/", { method: "POST", headers: this.headers(), body: JSON.stringify({ rate: rate.rateId, label_file_type: "PDF", async: false }) }) as ShippoTransaction;
+    return { dryRun: false, vendor: this.vendor, shipment: input, rate, labelUrl: data.label_url, trackingCode: data.tracking_number, trackingUrl: data.tracking_url_provider, shipmentId: data.object_id };
   }
-  const topWords = [...counts.entries()]
-    .map(([word, count]) => ({ word, count }))
-    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word))
-    .slice(0, Math.max(0, topN));
-  return {
-    chars: text.length,
-    words: tokens.length,
-    lines: text.length === 0 ? 0 : text.split("\n").length,
-    topWords,
-  };
+  async track(trackingCode: string, carrier?: string): Promise<TrackingResult> {
+    const data = await this.request("https://api.goshippo.com/tracks/", { method: "POST", headers: this.headers(), body: JSON.stringify({ tracking_number: trackingCode, carrier }) }) as ShippoTrack;
+    return { dryRun: false, vendor: this.vendor, trackingCode, carrier: data.carrier, status: data.tracking_status?.status ?? "unknown", events: (data.tracking_history ?? []).map((e) => ({ status: e.status ?? "unknown", message: e.status_details, location: e.location?.city, occurredAt: e.status_date })) };
+  }
 }
+
+function addressForEasyPost(a: Address) { return { name: a.name, company: a.company, street1: a.street1, street2: a.street2, city: a.city, state: a.state, zip: a.postalCode, country: a.country, phone: a.phone, email: a.email }; }
+function addressForShippo(a: Address) { return { name: a.name, company: a.company, street1: a.street1, street2: a.street2, city: a.city, state: a.state, zip: a.postalCode, country: a.country, phone: a.phone, email: a.email }; }
+function parcelForShippo(p: Parcel) { return { length: String(p.length), width: String(p.width), height: String(p.height), distance_unit: "in", weight: String(p.weight), mass_unit: "lb" }; }
+function shipmentIdFromRate(rate: Rate) { const [shipmentId] = (rate.rateId ?? "").split(":"); if (!shipmentId) throw new VendorError("EasyPost rateId is required to buy a label"); return shipmentId; }
+interface EasyPostShipment { id?: string; rates?: { id: string; carrier: string; service: string; rate: string; currency: string; delivery_days?: number }[]; postage_label?: { label_url?: string; tracking_code?: string; tracking_url?: string }; }
+function rateFromEasyPost(r: NonNullable<EasyPostShipment["rates"]>[number]): Rate { return { carrier: r.carrier, service: r.service, amount: r.rate, currency: r.currency, deliveryDays: r.delivery_days, rateId: r.id }; }
+function labelFromEasyPost(shipment: ShipmentInput, rate: Rate, data: EasyPostShipment): LabelResult { return { dryRun: false, vendor: "easypost", shipment, rate, labelUrl: data.postage_label?.label_url, trackingCode: data.postage_label?.tracking_code, trackingUrl: data.postage_label?.tracking_url, shipmentId: data.id }; }
+interface EasyPostTracker { carrier?: string; status?: string; public_url?: string; tracking_details?: { status?: string; message?: string; datetime?: string; tracking_location?: { city?: string } }[]; }
+interface ShippoShipment { rates?: { object_id: string; provider: string; servicelevel: { name: string }; amount: string; currency: string; estimated_days?: number }[]; }
+function rateFromShippo(r: NonNullable<ShippoShipment["rates"]>[number]): Rate { return { carrier: r.provider, service: r.servicelevel.name, amount: r.amount, currency: r.currency, deliveryDays: r.estimated_days, rateId: r.object_id }; }
+interface ShippoTransaction { object_id?: string; label_url?: string; tracking_number?: string; tracking_url_provider?: string; }
+interface ShippoTrack { carrier?: string; tracking_status?: { status?: string }; tracking_history?: { status?: string; status_details?: string; status_date?: string; location?: { city?: string } }[]; }

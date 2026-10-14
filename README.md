@@ -1,108 +1,52 @@
-# Agentic scaffold
+# agentic-ship
 
-Canonical scaffold for a CLI plus library plus MCP server pack.
+Rate, buy a label, and track a parcel. EasyPost and Shippo are supported.
+Dry run is the default.
 
-Clone this repo to start a new pack. It gives one core with three
-faces: a terminal command, an npm import, and an MCP server.
+## Install
 
-## What you get
-
-- One core: brand config, logs, guards, routing, dry run, cost reports.
-- Three faces over that core: CLI, library, MCP server.
-- A frozen core contract, so packs share one API.
-- A worker entry and a wrangler sample for edge deploys.
-- Build, typecheck, and tests that pass from a fresh clone.
+```sh
+npm install agentic-ship
+```
 
 ## Quick start
 
-```sh
-git clone https://github.com/pooriaarab/agentic-scaffold.git my-pack
-cd my-pack
-npm install
-npm run build
-npm run typecheck
-npm test
+Create `shipment.json`. Addresses use the `agentic-address` shape, but this
+package has no runtime dependency on it.
+
+```json
+{"vendor":"easypost","fromAddress":{"street1":"1 Market St","city":"San Francisco","state":"CA","postalCode":"94105","country":"US"},"toAddress":{"street1":"2 Broadway","city":"New York","state":"NY","postalCode":"10007","country":"US"},"parcel":{"length":10,"width":8,"height":4,"weight":2}}
 ```
 
-Run the command:
+This is a dry run. It makes no network request.
 
 ```sh
-node dist/cli.js summary --text "hello world hello"
+npx agentic-ship rate --vendor easypost --input shipment.json
 ```
 
-Call the library:
+Add `--live` to call a vendor. Set `EASYPOST_API_KEY` or `SHIPPO_API_KEY`.
+Vendor errors are returned as errors without being hidden.
+
+## Three uses
+
+### CLI
+
+```sh
+agentic-ship track --vendor shippo --tracking-code TRACKING_CODE
+```
+
+### npm library
 
 ```js
-import { summarizeText } from "./dist/index.js";
-
-console.log(summarizeText("hello world hello"));
+import { dryRunRate } from "agentic-ship";
+const result = dryRunRate(shipment);
 ```
 
-Start the MCP server:
+### MCP
 
 ```sh
-node dist/cli.js mcp
+npx agentic-ship mcp
 ```
 
-## Three usecases
-
-1. You run one text summary from the terminal.
-2. You import the summary function in a script.
-3. You let an agent call the same function as an MCP tool.
-
-## Clone checklist
-
-This repo is a template. Replace each slot in each file that holds it.
-
-- `__PACK_NAME__`: the directory name, like `my-pack`.
-- `__NPM_NAME__`: the npm name, like `agentic-<block>` (bare name, never @pooriaarab/ scoped unless the brief says scoped).
-- `__PACK_COMMAND__`: the terminal command, like `my-pack`.
-- `__PACK_DESCRIPTION__`: one plain sentence, under 100 chars.
-- `__PACK_KEYWORDS__`: plain keywords, like `notes, search, cli`.
-- `__GITHUB_USER__`: the repo owner, like `pooriaarab`.
-
-Slot files: `AGENTS.md`, `SKILL.md`, `RULES.md`, `llms.txt`,
-`server.json`, `.mcp.json`, `wrangler.jsonc`.
-
-Then rename the scaffold identity itself:
-
-- `package.json`: name, bin commands, mcpName. Remove `"private": true`.
-- `src/index.ts`: the `DEFAULT_BRAND` fields.
-- This file: the pitch and the examples above.
-
-At publish time, set `server.json` version to the npm version and
-`server.json` repository id from `gh api repos/OWNER/REPO --jq .id`.
-
-## Gates
-
-Run all three before you push a pack:
-
-```sh
-npm run build && npm run typecheck && npm test
-```
-
-Then run the real installed CLI once from a tarball:
-
-```sh
-npm pack
-npx --yes --package ./pooriaarab-agentic-scaffold-0.1.0.tgz agentic-pack summary --text "hello"
-```
-
-## Release flow
-
-Push to `main` for review. Merge to `release` to publish. The
-publish workflow ships only when the version is new.
-
-## Layout
-
-- `src/index.ts`: the library face.
-- `src/cli.ts`: the terminal face.
-- `src/mcp.ts`: the MCP server. `src/mcp-bin.ts` starts it.
-- `src/worker.ts`: the edge worker face.
-- `src/core.ts`: the shared core.
-- `agentic-core.d.ts`: the frozen contract.
-- `docs/agentic-core.md`: the contract in plain words.
-
-## License
-
-MIT. See `LICENSE`.
+The MCP server offers `rate_shipment`, `buy_label`, and `track_parcel`. Each
+uses the same JSON shapes as the CLI and library. All three default to dry run.
