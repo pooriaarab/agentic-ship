@@ -1,6 +1,6 @@
 {
   "name": "agentic-ship",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Rate, buy labels, and track parcels with EasyPost or Shippo.",
   "keywords": [
     "easypost",
