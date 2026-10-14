@@ -1,8 +1,1 @@
-{
-  "mcpServers": {
-    "__PACK_NAME__": {
-      "command": "npx",
-      "args": ["-y", "__NPM_NAME__", "mcp"]
-    }
-  }
-}
+{"mcpServers":{"agentic-ship":{"command":"npx","args":["agentic-ship-mcp"]}}}
