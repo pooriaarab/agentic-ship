@@ -1,7 +1,7 @@
 {
   "name": "agentic-ship",
   "version": "0.1.2",
-  "description": "Rate, buy labels, and track parcels with EasyPost or Shippo.",
+  "description": "Buy shipping labels and track parcels with EasyPost and Shippo from a CLI, MCP server, or agent.",
   "keywords": [
     "easypost",
     "shippo",
